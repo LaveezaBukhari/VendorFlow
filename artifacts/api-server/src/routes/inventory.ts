@@ -45,9 +45,12 @@ async function fmtItem(item: any) {
   };
 }
 
-router.get("/inventory", authenticate, async (req, res) => {
+function parseId(raw: string | string[]): number {
+  return parseInt(Array.isArray(raw) ? raw[0] : raw, 10);
+}
+
+router.get("/inventory", authenticate, async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const { page, limit, offset } = getPagination(req);
   const search = req.query.search as string;
   const category = req.query.category as string;
   const lowStock = req.query.lowStock === "true";
@@ -56,20 +59,23 @@ router.get("/inventory", authenticate, async (req, res) => {
 
   if (search) {
     const q = search.toLowerCase();
-    all = all.filter(i => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q));
+    all = all.filter((i) => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q));
   }
-  if (category) all = all.filter(i => i.category === category);
-  if (lowStock) all = all.filter(i => parseFloat(i.quantity ?? "0") <= parseFloat(i.reorderLevel ?? "0"));
+  if (category) all = all.filter((i) => i.category === category);
+  if (lowStock) all = all.filter((i) => parseFloat(i.quantity ?? "0") <= parseFloat(i.reorderLevel ?? "0"));
 
   all.sort((a, b) => a.name.localeCompare(b.name));
 
-  return res.json(await Promise.all(all.map(fmtItem)));
+  res.json(await Promise.all(all.map(fmtItem)));
 });
 
-router.post("/inventory", authenticate, authorize(...WRITE_ROLES), async (req, res) => {
+router.post("/inventory", authenticate, authorize(...WRITE_ROLES), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
   const parsed = itemSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
+    return;
+  }
 
   const [item] = await db.insert(inventoryTable).values({
     ...parsed.data,
@@ -81,31 +87,31 @@ router.post("/inventory", authenticate, authorize(...WRITE_ROLES), async (req, r
   }).returning();
 
   await writeAudit({ req, action: "created", entityType: "InventoryItem", entityId: item.id, after: await fmtItem(item) });
-  return res.status(201).json(await fmtItem(item));
+  res.status(201).json(await fmtItem(item));
 });
 
-router.get("/inventory/:id", authenticate, async (req, res) => {
+router.get("/inventory/:id", authenticate, async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const items = await db.select().from(inventoryTable)
     .where(and(eq(inventoryTable.id, id), eq(inventoryTable.tenantId, tenantId))).limit(1);
-  if (!items.length) return res.status(404).json({ error: "Item not found" });
-  return res.json(await fmtItem(items[0]));
+  if (!items.length) { res.status(404).json({ error: "Item not found" }); return; }
+  res.json(await fmtItem(items[0]));
 });
 
-router.patch("/inventory/:id", authenticate, authorize(...WRITE_ROLES), async (req, res) => {
+router.patch("/inventory/:id", authenticate, authorize(...WRITE_ROLES), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const existing = await db.select().from(inventoryTable)
     .where(and(eq(inventoryTable.id, id), eq(inventoryTable.tenantId, tenantId))).limit(1);
-  if (!existing.length) return res.status(404).json({ error: "Not found" });
+  if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
 
   const parsed = itemSchema.partial().safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid input" }); return; }
 
   const updateData: any = { ...parsed.data };
   if (parsed.data.quantity !== undefined) updateData.quantity = String(parsed.data.quantity);
@@ -114,16 +120,14 @@ router.patch("/inventory/:id", authenticate, authorize(...WRITE_ROLES), async (r
 
   const [updated] = await db.update(inventoryTable).set(updateData).where(eq(inventoryTable.id, id)).returning();
 
-  // Track quantity change as movement
   if (parsed.data.quantity !== undefined) {
     const prevQty = parseFloat(existing[0].quantity ?? "0");
     const newQty = parsed.data.quantity;
-    const diff = newQty - prevQty;
     await db.insert(inventoryMovementsTable).values({
       tenantId,
       inventoryItemId: id,
       movementType: "adjusted",
-      quantity: String(Math.abs(diff)),
+      quantity: String(Math.abs(newQty - prevQty)),
       previousQuantity: String(prevQty),
       newQuantity: String(newQty),
       reference: "manual_adjustment",
@@ -132,20 +136,20 @@ router.patch("/inventory/:id", authenticate, authorize(...WRITE_ROLES), async (r
   }
 
   await writeAudit({ req, action: "updated", entityType: "InventoryItem", entityId: id, before: existing[0], after: updated });
-  return res.json(await fmtItem(updated));
+  res.json(await fmtItem(updated));
 });
 
-router.post("/inventory/:id/movement", authenticate, authorize(...WRITE_ROLES), async (req, res) => {
+router.post("/inventory/:id/movement", authenticate, authorize(...WRITE_ROLES), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const parsed = movementSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid input" }); return; }
 
   const items = await db.select().from(inventoryTable)
     .where(and(eq(inventoryTable.id, id), eq(inventoryTable.tenantId, tenantId))).limit(1);
-  if (!items.length) return res.status(404).json({ error: "Item not found" });
+  if (!items.length) { res.status(404).json({ error: "Item not found" }); return; }
 
   const current = parseFloat(items[0].quantity ?? "0");
   const qty = parsed.data.quantity;
@@ -176,31 +180,31 @@ router.post("/inventory/:id/movement", authenticate, authorize(...WRITE_ROLES), 
   await writeAudit({ req, action: `inventory_${parsed.data.movementType}`, entityType: "InventoryItem", entityId: id,
     before: { quantity: current }, after: { quantity: newQty } });
 
-  return res.json({ movement, newQuantity: newQty });
+  res.json({ movement, newQuantity: newQty });
 });
 
-router.get("/inventory/:id/movements", authenticate, async (req, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+router.get("/inventory/:id/movements", authenticate, async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const movements = await db.select().from(inventoryMovementsTable)
     .where(eq(inventoryMovementsTable.inventoryItemId, id));
   movements.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  return res.json(movements);
+  res.json(movements);
 });
 
-router.delete("/inventory/:id", authenticate, authorize("super_admin", "company_admin", "inventory_manager"), async (req, res) => {
+router.delete("/inventory/:id", authenticate, authorize("super_admin", "company_admin", "inventory_manager"), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const existing = await db.select().from(inventoryTable)
     .where(and(eq(inventoryTable.id, id), eq(inventoryTable.tenantId, tenantId))).limit(1);
-  if (!existing.length) return res.status(404).json({ error: "Not found" });
+  if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
 
   await db.delete(inventoryTable).where(eq(inventoryTable.id, id));
   await writeAudit({ req, action: "deleted", entityType: "InventoryItem", entityId: id, before: existing[0] });
-  return res.json({ message: "Item deleted" });
+  res.json({ message: "Item deleted" });
 });
 
 export default router;

@@ -60,29 +60,35 @@ async function fmtPO(po: any) {
 
 let poCounter = 2000;
 
-router.get("/procurement", authenticate, async (req, res) => {
+function parseId(raw: string | string[]): number {
+  return parseInt(Array.isArray(raw) ? raw[0] : raw, 10);
+}
+
+router.get("/procurement", authenticate, async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const { page, limit, offset } = getPagination(req);
   const status = req.query.status as string;
   const priority = req.query.priority as string;
   const vendorId = req.query.vendorId ? parseInt(req.query.vendorId as string) : undefined;
 
   let all = await db.select().from(purchaseOrdersTable).where(eq(purchaseOrdersTable.tenantId, tenantId));
 
-  if (status) all = all.filter(p => p.status === status);
-  if (priority) all = all.filter(p => p.priority === priority);
-  if (vendorId) all = all.filter(p => p.vendorId === vendorId);
+  if (status) all = all.filter((p) => p.status === status);
+  if (priority) all = all.filter((p) => p.priority === priority);
+  if (vendorId) all = all.filter((p) => p.vendorId === vendorId);
 
   all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  return res.json(await Promise.all(all.map(fmtPO)));
+  res.json(await Promise.all(all.map(fmtPO)));
 });
 
-router.post("/procurement", authenticate, authorize(...WRITE_ROLES), async (req, res) => {
+router.post("/procurement", authenticate, authorize(...WRITE_ROLES), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
   const user = (req as any).user;
   const parsed = poSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
+    return;
+  }
 
   poCounter++;
   const poNumber = `PO-${new Date().getFullYear()}-${String(poCounter).padStart(4, "0")}`;
@@ -104,35 +110,36 @@ router.post("/procurement", authenticate, authorize(...WRITE_ROLES), async (req,
   }).returning();
 
   await writeAudit({ req, action: "created", entityType: "PurchaseOrder", entityId: po.id, after: { poNumber, total, status: "draft" } });
-  return res.status(201).json(await fmtPO(po));
+  res.status(201).json(await fmtPO(po));
 });
 
-router.get("/procurement/:id", authenticate, async (req, res) => {
+router.get("/procurement/:id", authenticate, async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const pos = await db.select().from(purchaseOrdersTable)
     .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.tenantId, tenantId))).limit(1);
-  if (!pos.length) return res.status(404).json({ error: "Purchase order not found" });
-  return res.json(await fmtPO(pos[0]));
+  if (!pos.length) { res.status(404).json({ error: "Purchase order not found" }); return; }
+  res.json(await fmtPO(pos[0]));
 });
 
-router.patch("/procurement/:id", authenticate, authorize(...WRITE_ROLES), async (req, res) => {
+router.patch("/procurement/:id", authenticate, authorize(...WRITE_ROLES), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const existing = await db.select().from(purchaseOrdersTable)
     .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.tenantId, tenantId))).limit(1);
-  if (!existing.length) return res.status(404).json({ error: "Not found" });
+  if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
 
   if (!["draft", "rejected"].includes(existing[0].status)) {
-    return res.status(409).json({ error: "Can only edit draft or rejected orders" });
+    res.status(409).json({ error: "Can only edit draft or rejected orders" });
+    return;
   }
 
   const parsed = poSchema.partial().safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid input" }); return; }
 
   const updateData: any = {};
   if (parsed.data.vendorId !== undefined) updateData.vendorId = parsed.data.vendorId;
@@ -147,27 +154,27 @@ router.patch("/procurement/:id", authenticate, authorize(...WRITE_ROLES), async 
 
   const [updated] = await db.update(purchaseOrdersTable).set(updateData).where(eq(purchaseOrdersTable.id, id)).returning();
   await writeAudit({ req, action: "updated", entityType: "PurchaseOrder", entityId: id, before: existing[0], after: updated });
-  return res.json(await fmtPO(updated));
+  res.json(await fmtPO(updated));
 });
 
-router.patch("/procurement/:id/status", authenticate, async (req, res) => {
+router.patch("/procurement/:id/status", authenticate, async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
   const user = (req as any).user;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const parsed = statusSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid input" }); return; }
 
   const existing = await db.select().from(purchaseOrdersTable)
     .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.tenantId, tenantId))).limit(1);
-  if (!existing.length) return res.status(404).json({ error: "Not found" });
+  if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
 
   const { status } = parsed.data;
 
-  // Approval gate — only approvers can approve/reject
   if (["approved", "rejected"].includes(status) && !APPROVE_ROLES.includes(user.role)) {
-    return res.status(403).json({ error: "Insufficient permissions to approve/reject orders" });
+    res.status(403).json({ error: "Insufficient permissions to approve/reject orders" });
+    return;
   }
 
   const historyEntry = {
@@ -187,7 +194,6 @@ router.patch("/procurement/:id/status", authenticate, async (req, res) => {
     .where(eq(purchaseOrdersTable.id, id))
     .returning();
 
-  // Create notification for status changes
   await db.insert(notificationsTable).values({
     tenantId,
     userId: existing[0].createdBy,
@@ -203,21 +209,21 @@ router.patch("/procurement/:id/status", authenticate, async (req, res) => {
     before: { status: existing[0].status }, after: { status },
   });
 
-  return res.json(await fmtPO(updated));
+  res.json(await fmtPO(updated));
 });
 
-router.delete("/procurement/:id", authenticate, authorize("super_admin", "company_admin"), async (req, res) => {
+router.delete("/procurement/:id", authenticate, authorize("super_admin", "company_admin"), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const existing = await db.select().from(purchaseOrdersTable)
     .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.tenantId, tenantId))).limit(1);
-  if (!existing.length) return res.status(404).json({ error: "Not found" });
+  if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
 
   await db.delete(purchaseOrdersTable).where(eq(purchaseOrdersTable.id, id));
   await writeAudit({ req, action: "deleted", entityType: "PurchaseOrder", entityId: id, before: existing[0] });
-  return res.json({ message: "Purchase order deleted" });
+  res.json({ message: "Purchase order deleted" });
 });
 
 export default router;

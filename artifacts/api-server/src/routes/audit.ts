@@ -6,9 +6,9 @@ import { getPagination, paginate } from "../lib/pagination";
 
 const router = Router();
 
-router.get("/audit", authenticate, authorize("super_admin", "company_admin", "auditor", "finance_officer"), async (req, res) => {
+router.get("/audit", authenticate, authorize("super_admin", "company_admin", "auditor", "finance_officer"), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const { page, limit, offset } = getPagination(req);
+  const { page, limit } = getPagination(req);
   const entityType = req.query.entityType as string;
   const action = req.query.action as string;
   const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
@@ -20,13 +20,16 @@ router.get("/audit", authenticate, authorize("super_admin", "company_admin", "au
     .orderBy(desc(auditLogsTable.timestamp))
     .limit(1000);
 
-  if (entityType) all = all.filter(l => l.entityType === entityType);
-  if (action) all = all.filter(l => l.action === action);
-  if (userId) all = all.filter(l => l.userId === userId);
-  if (from) all = all.filter(l => new Date(l.timestamp) >= new Date(from));
-  if (to) all = all.filter(l => new Date(l.timestamp) <= new Date(to));
+  if (entityType) all = all.filter((l) => l.entityType === entityType);
+  if (action) all = all.filter((l) => l.action === action);
+  if (userId) all = all.filter((l) => l.userId === userId);
+  if (from) all = all.filter((l) => new Date(l.timestamp) >= new Date(from));
+  if (to) all = all.filter((l) => new Date(l.timestamp) <= new Date(to));
 
-  return res.json(all);
+  const total = all.length;
+  const paged = all.slice((page - 1) * limit, page * limit);
+
+  res.json({ data: paged, total, page, limit, totalPages: Math.ceil(total / limit) });
 });
 
 export default router;

@@ -8,6 +8,11 @@ import auditRouter from "./audit";
 import dashboardRouter from "./dashboard";
 import notificationsRouter from "./notifications";
 import workflowRouter from "./workflow";
+import usersRouter from "./users";
+import tenantsRouter from "./tenants";
+import invoicesRouter from "./invoices";
+import sseRouter from "./sse";
+import reportsRouter from "./reports";
 
 const router: IRouter = Router();
 
@@ -20,5 +25,10 @@ router.use(auditRouter);
 router.use(dashboardRouter);
 router.use(notificationsRouter);
 router.use(workflowRouter);
+router.use(usersRouter);
+router.use(tenantsRouter);
+router.use(invoicesRouter);
+router.use(sseRouter);
+router.use(reportsRouter);
 
 export default router;

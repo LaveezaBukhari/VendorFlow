@@ -22,9 +22,12 @@ function safeUser(u: any) {
   return rest;
 }
 
-router.post("/auth/login", async (req, res) => {
+router.post("/auth/login", async (req, res): Promise<void> => {
   const parsed = loginSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid credentials format" });
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid credentials format" });
+    return;
+  }
 
   const { email, password } = parsed.data;
 
@@ -32,26 +35,28 @@ router.post("/auth/login", async (req, res) => {
 
   // Auto-provision demo user on first login
   if (users.length === 0) {
-    // Ensure default tenant exists
     let tenants = await db.select().from(tenantsTable).where(eq(tenantsTable.id, 1)).limit(1);
     if (tenants.length === 0) {
       await db.insert(tenantsTable).values({ id: 1, name: "Acme Corp", slug: "acme" }).onConflictDoNothing();
     }
 
     const hash = await bcrypt.hash(password, 12);
-    const displayName = email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, l => l.toUpperCase());
-    const [newUser] = await db.insert(usersTable).values({
-      email,
-      name: displayName,
-      passwordHash: hash,
-      role: "company_admin",
-      tenantId: 1,
-    }).returning();
+    const displayName = email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+    const [newUser] = await db
+      .insert(usersTable)
+      .values({ email, name: displayName, passwordHash: hash, role: "company_admin", tenantId: 1 })
+      .returning();
     users = [newUser];
   } else {
     const valid = await bcrypt.compare(password, users[0].passwordHash);
-    if (!valid) return res.status(401).json({ error: "Invalid email or password" });
-    if (!users[0].isActive) return res.status(403).json({ error: "Account deactivated" });
+    if (!valid) {
+      res.status(401).json({ error: "Invalid email or password" });
+      return;
+    }
+    if (!users[0].isActive) {
+      res.status(403).json({ error: "Account deactivated" });
+      return;
+    }
   }
 
   const user = users[0];
@@ -59,22 +64,24 @@ router.post("/auth/login", async (req, res) => {
   const accessToken = signAccessToken(payload);
   const refreshToken = signRefreshToken(payload);
 
-  await db.update(usersTable)
-    .set({ refreshToken, lastLogin: new Date() })
-    .where(eq(usersTable.id, user.id));
+  await db.update(usersTable).set({ refreshToken, lastLogin: new Date() }).where(eq(usersTable.id, user.id));
 
-  return res.json({ accessToken, refreshToken, user: safeUser(user) });
+  res.json({ accessToken, refreshToken, user: safeUser(user) });
 });
 
-router.post("/auth/refresh", async (req, res) => {
+router.post("/auth/refresh", async (req, res): Promise<void> => {
   const parsed = refreshSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Refresh token required" });
+  if (!parsed.success) {
+    res.status(400).json({ error: "Refresh token required" });
+    return;
+  }
 
   try {
     const payload = verifyRefreshToken(parsed.data.refreshToken);
     const users = await db.select().from(usersTable).where(eq(usersTable.id, payload.userId)).limit(1);
     if (!users.length || users[0].refreshToken !== parsed.data.refreshToken) {
-      return res.status(401).json({ error: "Invalid refresh token" });
+      res.status(401).json({ error: "Invalid refresh token" });
+      return;
     }
 
     const user = users[0];
@@ -84,23 +91,26 @@ router.post("/auth/refresh", async (req, res) => {
 
     await db.update(usersTable).set({ refreshToken: newRefreshToken }).where(eq(usersTable.id, user.id));
 
-    return res.json({ accessToken, refreshToken: newRefreshToken });
+    res.json({ accessToken, refreshToken: newRefreshToken });
   } catch {
-    return res.status(401).json({ error: "Invalid or expired refresh token" });
+    res.status(401).json({ error: "Invalid or expired refresh token" });
   }
 });
 
-router.post("/auth/logout", authenticate, async (req, res) => {
+router.post("/auth/logout", authenticate, async (req, res): Promise<void> => {
   const user = (req as any).user;
   await db.update(usersTable).set({ refreshToken: null }).where(eq(usersTable.id, user.userId));
-  return res.json({ message: "Logged out" });
+  res.json({ message: "Logged out" });
 });
 
-router.get("/auth/me", authenticate, async (req, res) => {
+router.get("/auth/me", authenticate, async (req, res): Promise<void> => {
   const { userId } = (req as any).user;
   const users = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
-  if (!users.length) return res.status(404).json({ error: "User not found" });
-  return res.json(safeUser(users[0]));
+  if (!users.length) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+  res.json(safeUser(users[0]));
 });
 
 export default router;

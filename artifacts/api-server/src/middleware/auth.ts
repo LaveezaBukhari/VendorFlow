@@ -1,12 +1,13 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifyAccessToken } from "../lib/jwt";
 
-export function authenticate(req: Request, res: Response, next: NextFunction) {
+export function authenticate(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
   if (!token) {
-    return res.status(401).json({ error: "Authentication required" });
+    res.status(401).json({ error: "Authentication required" });
+    return;
   }
 
   try {
@@ -14,16 +15,20 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
     (req as any).user = payload;
     next();
   } catch {
-    return res.status(401).json({ error: "Invalid or expired token" });
+    res.status(401).json({ error: "Invalid or expired token" });
   }
 }
 
 export function authorize(...roles: string[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     const user = (req as any).user;
-    if (!user) return res.status(401).json({ error: "Not authenticated" });
+    if (!user) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
     if (roles.length > 0 && !roles.includes(user.role)) {
-      return res.status(403).json({ error: "Insufficient permissions" });
+      res.status(403).json({ error: "Insufficient permissions" });
+      return;
     }
     next();
   };

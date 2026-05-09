@@ -7,3 +7,4 @@ export * from "./inventory_movements";
 export * from "./audit_logs";
 export * from "./notifications";
 export * from "./workflow_rules";
+export * from "./invoices";

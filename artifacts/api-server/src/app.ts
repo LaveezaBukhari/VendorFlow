@@ -5,6 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { logger } from "./lib/logger";
 import { correlationId } from "./middleware/correlation";
+import { startScheduler } from "./lib/scheduler";
 import router from "./routes";
 
 const app: Express = express();
@@ -70,5 +71,10 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   const status = err.status || err.statusCode || 500;
   res.status(status).json({ error: err.message || "Internal server error" });
 });
+
+// Start background scheduler (only in non-test environments)
+if (process.env.NODE_ENV !== "test") {
+  startScheduler();
+}
 
 export default app;

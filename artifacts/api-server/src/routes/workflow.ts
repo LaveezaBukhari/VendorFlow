@@ -25,16 +25,23 @@ const ruleSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
-router.get("/workflow-rules", authenticate, async (req, res) => {
+function parseId(raw: string | string[]): number {
+  return parseInt(Array.isArray(raw) ? raw[0] : raw, 10);
+}
+
+router.get("/workflow-rules", authenticate, async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
   const rules = await db.select().from(workflowRulesTable).where(eq(workflowRulesTable.tenantId, tenantId));
-  return res.json(rules);
+  res.json(rules);
 });
 
-router.post("/workflow-rules", authenticate, authorize(...ADMIN_ROLES), async (req, res) => {
+router.post("/workflow-rules", authenticate, authorize(...ADMIN_ROLES), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
   const parsed = ruleSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid input", details: parsed.error.issues });
+    return;
+  }
 
   const [rule] = await db.insert(workflowRulesTable).values({
     tenantId,
@@ -43,16 +50,16 @@ router.post("/workflow-rules", authenticate, authorize(...ADMIN_ROLES), async (r
     maxAmount: parsed.data.maxAmount ? String(parsed.data.maxAmount) : null,
   }).returning();
 
-  return res.status(201).json(rule);
+  res.status(201).json(rule);
 });
 
-router.patch("/workflow-rules/:id", authenticate, authorize(...ADMIN_ROLES), async (req, res) => {
+router.patch("/workflow-rules/:id", authenticate, authorize(...ADMIN_ROLES), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const parsed = ruleSchema.partial().safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid input" }); return; }
 
   const updateData: any = { ...parsed.data };
   if (parsed.data.minAmount !== undefined) updateData.minAmount = String(parsed.data.minAmount);
@@ -62,18 +69,18 @@ router.patch("/workflow-rules/:id", authenticate, authorize(...ADMIN_ROLES), asy
     .where(and(eq(workflowRulesTable.id, id), eq(workflowRulesTable.tenantId, tenantId)))
     .returning();
 
-  if (!updated) return res.status(404).json({ error: "Not found" });
-  return res.json(updated);
+  if (!updated) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(updated);
 });
 
-router.delete("/workflow-rules/:id", authenticate, authorize(...ADMIN_ROLES), async (req, res) => {
+router.delete("/workflow-rules/:id", authenticate, authorize(...ADMIN_ROLES), async (req, res): Promise<void> => {
   const tenantId = (req as any).user.tenantId;
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+  const id = parseId(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   await db.delete(workflowRulesTable)
     .where(and(eq(workflowRulesTable.id, id), eq(workflowRulesTable.tenantId, tenantId)));
-  return res.json({ message: "Workflow rule deleted" });
+  res.json({ message: "Workflow rule deleted" });
 });
 
 export default router;
